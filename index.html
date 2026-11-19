@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Air Piano — 5-Finger Pro Prototype</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: radial-gradient(circle at top, #1a1f2e, #0b0d14);
+      color: #f1f5f9; font-family: system-ui, -apple-system, sans-serif;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 16px;
+    }
+    .toolbar {
+      display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center;
+      background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 10px 16px; border-radius: 14px; backdrop-filter: blur(10px);
+    }
+    .btn-start {
+      background: linear-gradient(135deg, #22c55e, #10b981); color: #052e16;
+      border: none; padding: 9px 18px; border-radius: 9px; font-weight: 700; cursor: pointer;
+    }
+    .btn-start:disabled { background: #334155; color: #94a3b8; cursor: default; }
+    .toggle-group { display: flex; background: rgba(0, 0, 0, 0.35); padding: 3px; border-radius: 9px; gap: 4px; }
+    .toggle-group button {
+      background: transparent; color: #94a3b8; border: none; padding: 6px 12px;
+      border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; transition: 0.15s;
+    }
+    .toggle-group button.active { background: #38bdf8; color: #082f49; }
+    .status { display: flex; align-items: center; gap: 7px; font-size: 13px; color: #cbd5e1; padding: 0 4px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; }
+    .dot.ready { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+    canvas {
+      width: min(960px, 95vw); aspect-ratio: 16 / 9; border-radius: 16px;
+      background: #000; border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- แถบควบคุม: เปิดกล้อง / โหมดเส้นตัด-แตะ / เสียงยาว-สั้น -->
+  <div class="toolbar">
+    <button id="startBtn" class="btn-start">เปิดกล้อง & เริ่มเล่น</button>
+
+    <div class="toggle-group" id="modeGroup">
+      <button data-val="line" class="active">เส้นตัด</button>
+      <button data-val="tap">แตะกลางอากาศ</button>
+    </div>
+
+    <div class="toggle-group" id="soundGroup">
+      <button data-val="long" class="active">เสียงยาว</button>
+      <button data-val="short">เสียงสั้น</button>
+    </div>
+
+    <div class="status"><span id="dot" class="dot"></span><span id="statusText">พร้อมเปิดกล้อง</span></div>
+  </div>
+
+  <video id="video" autoplay playsinline muted style="display:none;"></video>
+  <canvas id="canvas" width="960" height="540"></canvas>
+
+  <script type="module">
+    import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+    /* ####################################################################
+       1. ตั้งค่าระบบและข้อมูลคีย์เปียโน (CONFIG & DATA)
+       กำหนดคีย์เปียโน C4-C5, โครงกระดูกมือ, ปลายนิ้วทั้ง 5 และค่าความไว
+    #################################################################### */
+    const FINGER_TIPS = [4, 8, 12, 16, 20]; // โป้ง, ชี้, กลาง, นาง, ก้อย
+    const HAND_BONES = [
+      [0,1],[1,2],[2,3],[3,4], [0,5],[5,6],[6,7],[7,8], [5,9],[9,10],[10,11],[11,12],
+      [9,13],[13,14],[14,15],[15,16], [13,17],[17,18],[18,19],[19,20], [0,17]
+    ];
+    const WHITE_NOTES = ["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5"];
+    const BLACK_NOTES = [
+      { note: "C#4", pos: 1 }, { note: "D#4", pos: 2 },
+      { note: "F#4", pos: 4 }, { note: "G#4", pos: 5 }, { note: "A#4", pos: 6 }
+    ];
+
+    const CFG = {
+      keyTop: 0.44,       // ขอบบนของคีย์เปียโน
+      keyHeight: 0.48,    // ความสูงของคีย์ขาว
+      triggerY: 0.68,     // ระดับเส้นตัด (โหมดเส้นตัด)
+      deadzone: 0.04,     // ระยะยกนิ้วกลับกันเสียงรัว
+      tapSpeed: 0.026,    // ความเร็วการกระดิกนิ้วลง (โหมดแตะ)
+      tapCooldown: 140,   // หน่วงเวลากันเบิ้ลในโหมดแตะ (ms)
+      smooth: 0.45        // ความลื่นของพิกัดนิ้ว (EMA)
+    };
+
+    const state = { mode: "line", sound: "long", samplerReady: false };
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const video = document.getElementById("video");
+    const statusText = document.getElementById("statusText");
+    const dot = document.getElementById("dot");
+
+    let handLandmarker = null;
+    let latestHands = [];
+    const fingers = {};   // สถานะของแต่ละนิ้ว (พิกัด, กดอยู่ไหม, โน้ตที่ชี้)
+    const keyGlow = {};   // เวลาเรืองแสงของแต่ละคีย์
+    const ripples = [];   // เอฟเฟกต์วงคลื่นตอนกดโน้ต
+
+
+    /* ####################################################################
+       2. ระบบเสียงแกรนด์เปียโน + เสียงสำรอง (AUDIO ENGINE)
+       ใช้เสียง Salamander Grand Piano + Reverb พร้อม Synth สำรองระหว่างโหลด
+    #################################################################### */
+    const reverb = new Tone.Reverb({ decay: 1.8, wet: 0.22 }).toDestination();
+    const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: "triangle" }
+    }).connect(reverb);
+
+    const piano = new Tone.Sampler({
+      urls: { C4: "C4.mp3", "D#4": "Ds4.mp3", "F#4": "Fs4.mp3", A4: "A4.mp3", C5: "C5.mp3" },
+      baseUrl: "https://tonejs.github.io/audio/salamander/",
+      onload: () => {
+        state.samplerReady = true;
+        statusText.textContent = "เสียงแกรนด์เปียโนพร้อมแล้ว";
+        dot.classList.add("ready");
+      }
+    }).connect(reverb);
+
+    function playNote(note, px, py) {
+      const isShort = state.sound === "short";
+      const duration = isShort ? 0.14 : 1.1;
+
+      if (state.samplerReady) {
+        piano.release = isShort ? 0.15 : 2.2;
+        piano.triggerAttackRelease(note, duration);
+      } else {
+        fallbackSynth.set({ envelope: { release: isShort ? 0.15 : 1.4 } });
+        fallbackSynth.triggerAttackRelease(note, duration);
+      }
+
+      keyGlow[note] = performance.now() + 240;
+      ripples.push({ x: px, y: py, r: 10, alpha: 0.9 }); // สร้างวงคลื่นที่ปลายนิ้ว
+    }
+
+
+    /* ####################################################################
+       3. คำนวณพื้นที่คีย์เปียโน (KEY GEOMETRY)
+       สร้างกรอบคีย์ขาว-ดำ และตรวจสอบว่าพิกัดปลายนิ้วอยู่บนโน้ตไหน
+    #################################################################### */
+    function getKeys() {
+      const W = canvas.width, H = canvas.height;
+      const top = H * CFG.keyTop, wH = H * CFG.keyHeight, wW = W / WHITE_NOTES.length;
+      const bW = wW * 0.58, bH = wH * 0.56;
+
+      const whites = WHITE_NOTES.map((note, i) => ({ note, x: i * wW + 2, y: top, w: wW - 4, h: wH, black: false }));
+      const blacks = BLACK_NOTES.map(b => ({ note: b.note, x: b.pos * wW - bW / 2, y: top, w: bW, h: bH, black: true }));
+      return { whites, blacks };
+    }
+
+    function findNoteAt(nx, ny, keys) {
+      const px = nx * canvas.width, py = ny * canvas.height;
+      for (const k of [...keys.blacks, ...keys.whites]) {
+        if (px >= k.x && px <= k.x + k.w && py >= k.y && py <= k.y + k.h) return k.note;
+      }
+      return null;
+    }
+
+
+    /* ####################################################################
+       4. ตรวจจับมือ 5 นิ้ว & ตรรกะการกด (HAND TRACKING & TRIGGER)
+       กรองอาการมือสั่น (EMA) และแยกการกดระหว่างโหมด "เส้นตัด" กับ "แตะ"
+    #################################################################### */
+    function updateFingers(hands, keys) {
+      const now = performance.now();
+      const activeIds = new Set();
+
+      hands.forEach((landmarks, hIdx) => {
+        FINGER_TIPS.forEach((tipIdx) => {
+          const id = `${hIdx}_${tipIdx}`;
+          activeIds.add(id);
+
+          const rawX = 1 - landmarks[tipIdx].x; // กลับด้านแกน X ให้เหมือนกระจก
+          const rawY = landmarks[tipIdx].y;
+          const prev = fingers[id] || { x: rawX, y: rawY, pressed: false, lastTap: 0 };
+
+          const x = prev.x + (rawX - prev.x) * CFG.smooth;
+          const y = prev.y + (rawY - prev.y) * CFG.smooth;
+          const vy = y - prev.y;
+          const note = findNoteAt(x, y, keys);
+
+          let pressed = prev.pressed;
+          let lastTap = prev.lastTap;
+
+          if (state.mode === "line") {
+            if (!pressed && y > CFG.triggerY && note) {
+              playNote(note, x * canvas.width, y * canvas.height);
+              pressed = true;
+            } else if (pressed && (y < CFG.triggerY - CFG.deadzone || !note)) {
+              pressed = false;
+            }
+          } else {
+            if (!pressed && vy > CFG.tapSpeed && note && now - lastTap > CFG.tapCooldown) {
+              playNote(note, x * canvas.width, y * canvas.height);
+              pressed = true;
+              lastTap = now;
+            } else if (pressed && vy < 0.005) {
+              pressed = false;
+            }
+          }
+
+          fingers[id] = { x, y, pressed, note, lastTap };
+        });
+      });
+
+      for (const id of Object.keys(fingers)) {
+        if (!activeIds.has(id)) delete fingers[id];
+      }
+    }
+
+
+    /* ####################################################################
+       5. วาดภาพ เอฟเฟกต์ และโครงกระดูกมือ (CANVAS RENDERING & FX)
+       วาดภาพกล้อง, คีย์เปียโนมีมิติ, เส้นตัด, โครงกระดูกมือ และวงคลื่น
+    #################################################################### */
+    function draw(keys) {
+      const W = canvas.width, H = canvas.height, now = performance.now();
+
+      // 5.1 วาดภาพกล้องกลับด้าน + ฟิล์มมืดบางๆ ให้คีย์เด่นขึ้น
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, -W, 0, W, H);
+      ctx.restore();
+      ctx.fillStyle = "rgba(8, 12, 24, 0.28)";
+      ctx.fillRect(0, 0, W, H);
+
+      // 5.2 วาดคีย์ขาวและคีย์ดำ (ยุบตัวและเรืองแสงเมื่อถูกกด)
+      const drawKey = (k) => {
+        const isLit = (keyGlow[k.note] || 0) > now;
+        const isHover = Object.values(fingers).some(f => f.note === k.note);
+        const pressOffset = isLit ? 5 : 0;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(k.x, k.y + pressOffset, k.w, k.h, [4, 4, 10, 10]);
+
+        if (isLit) {
+          ctx.fillStyle = "rgba(34, 197, 94, 0.88)";
+          ctx.shadowColor = "#22c55e"; ctx.shadowBlur = 18;
+        } else if (isHover) {
+          ctx.fillStyle = k.black ? "rgba(56, 189, 248, 0.45)" : "rgba(186, 230, 253, 0.78)";
+        } else {
+          ctx.fillStyle = k.black ? "rgba(15, 23, 42, 0.90)" : "rgba(248, 250, 252, 0.62)";
+        }
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = isHover ? "#38bdf8" : "rgba(0, 0, 0, 0.45)";
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = isLit ? "#fff" : (k.black ? "#e2e8f0" : "#0f172a");
+        ctx.font = "700 14px system-ui";
+        ctx.textAlign = "center";
+        ctx.fillText(k.note, k.x + k.w / 2, k.y + k.h - 14 + pressOffset);
+      };
+      keys.whites.forEach(drawKey);
+      keys.blacks.forEach(drawKey);
+
+      // 5.3 วาดเส้นตัดเรืองแสง (เฉพาะโหมด Line)
+      if (state.mode === "line") {
+        const ly = H * CFG.triggerY;
+        ctx.save();
+        ctx.strokeStyle = "rgba(250, 204, 21, 0.9)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 8]);
+        ctx.shadowColor = "#facc15"; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(W, ly); ctx.stroke();
+        ctx.restore();
+      }
+
+      // 5.4 วาดโครงกระดูกมือ (บางๆ โปร่งแสง)
+      ctx.save();
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
+      ctx.lineWidth = 2;
+      latestHands.forEach(lm => {
+        HAND_BONES.forEach(([a, b]) => {
+          ctx.beginPath();
+          ctx.moveTo((1 - lm[a].x) * W, lm[a].y * H);
+          ctx.lineTo((1 - lm[b].x) * W, lm[b].y * H);
+          ctx.stroke();
+        });
+      });
+      ctx.restore();
+
+      // 5.5 วาดจุดปลายนิ้วทั้ง 5
+      for (const f of Object.values(fingers)) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(f.x * W, f.y * H, f.pressed ? 11 : 7, 0, Math.PI * 2);
+        ctx.fillStyle = f.pressed ? "#22c55e" : "#facc15";
+        ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 12;
+        ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 5.6 วาดเอฟเฟกต์วงคลื่น (Ripple) ตอนกดติด
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const rp = ripples[i];
+        rp.r += 3.5; rp.alpha -= 0.045;
+        if (rp.alpha <= 0) { ripples.splice(i, 1); continue; }
+        ctx.beginPath();
+        ctx.arc(rp.x, rp.y, rp.r, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(34, 197, 94, ${rp.alpha})`;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+    }
+
+
+    /* ####################################################################
+       6. เริ่มกล้อง โหลด AI และควบคุมปุ่ม (INIT & MAIN LOOP)
+       ผูกปุ่มสลับโหมด เปิดเว็บแคม โหลด MediaPipe และรันลูปทุกเฟรม
+    #################################################################### */
+    function bindToggle(groupId, key) {
+      const group = document.getElementById(groupId);
+      group.addEventListener("click", (e) => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+        group.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        state[key] = btn.dataset.val;
+      });
+    }
+    bindToggle("modeGroup", "mode");
+    bindToggle("soundGroup", "sound");
+
+    function loop() {
+      if (video.readyState >= 2) {
+        const result = handLandmarker.detectForVideo(video, performance.now());
+        latestHands = result.landmarks || [];
+        const keys = getKeys();
+        updateFingers(latestHands, keys);
+        draw(keys);
+      }
+      requestAnimationFrame(loop);
+    }
+
+    document.getElementById("startBtn").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      statusText.textContent = "กำลังโหลด AI และเปิดกล้อง...";
+      await Tone.start();
+
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      );
+      handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numHands: 2
+      });
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 960, height: 540 } });
+      video.srcObject = stream;
+      video.onloadeddata = () => {
+        if (!state.samplerReady) statusText.textContent = "กล้องพร้อมแล้ว (กำลังโหลดเสียงเปียโน...)";
+        loop();
+      };
+    });
+  </script>
+</body>
+</html>
