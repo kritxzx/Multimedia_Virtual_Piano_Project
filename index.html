@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Air Piano — 5-Finger Pro Prototype</title>
+  <title>Visual Piano</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
   <style>
     * { box-sizing: border-box; }
@@ -41,19 +41,19 @@
 <body>
 
   <div class="toolbar">
-    <button id="startBtn" class="btn-start">เปิดกล้อง & เริ่มเล่น</button>
+    <button id="startBtn" class="btn-start">Open camera and play</button>
 
     <div class="toggle-group" id="modeGroup">
-      <button data-val="line" class="active">เส้นตัด</button>
-      <button data-val="tap">แตะกลางอากาศ</button>
+      <button data-val="line" class="active">line</button>
+      <button data-val="tap">tap</button>
     </div>
 
     <div class="toggle-group" id="soundGroup">
-      <button data-val="long" class="active">เสียงยาว</button>
-      <button data-val="short">เสียงสั้น</button>
+      <button data-val="long" class="active">long sound</button>
+      <button data-val="short">short sound</button>
     </div>
 
-    <div class="status"><span id="dot" class="dot"></span><span id="statusText">พร้อมเปิดกล้อง</span></div>
+    <div class="status"><span id="dot" class="dot"></span><span id="statusText">ready camera</span></div>
   </div>
 
   <video id="video" autoplay playsinline muted style="display:none;"></video>
@@ -65,7 +65,7 @@
     /* ####################################################################
     CONFIG & DATA
     #################################################################### */
-    const FINGER_TIPS = [4, 8, 12, 16, 20]; // โป้ง, ชี้, กลาง, นาง, ก้อย
+    const FINGER_TIPS = [4, 8, 12, 16, 20];
     const HAND_BONES = [
       [0,1],[1,2],[2,3],[3,4], [0,5],[5,6],[6,7],[7,8], [5,9],[9,10],[10,11],[11,12],
       [9,13],[13,14],[14,15],[15,16], [13,17],[17,18],[18,19],[19,20], [0,17]
@@ -112,7 +112,7 @@
       baseUrl: "https://tonejs.github.io/audio/salamander/",
       onload: () => {
         state.samplerReady = true;
-        statusText.textContent = "เสียงแกรนด์เปียโนพร้อมแล้ว";
+        statusText.textContent = "Grand piano ready";
         dot.classList.add("ready");
       }
     }).connect(reverb);
@@ -325,7 +325,7 @@
 
     document.getElementById("startBtn").addEventListener("click", async (e) => {
       e.target.disabled = true;
-      statusText.textContent = "กำลังโหลด AI และเปิดกล้อง...";
+      statusText.textContent = "Loading";
       await Tone.start();
 
       const vision = await FilesetResolver.forVisionTasks(
@@ -343,7 +343,7 @@
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 960, height: 540 } });
       video.srcObject = stream;
       video.onloadeddata = () => {
-        if (!state.samplerReady) statusText.textContent = "กล้องพร้อมแล้ว (กำลังโหลดเสียงเปียโน...)";
+        if (!state.samplerReady) statusText.textContent = "Camera is ready";
         loop();
       };
     });
