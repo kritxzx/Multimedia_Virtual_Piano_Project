@@ -134,7 +134,7 @@
       }
 
       keyGlow[note] = performance.now() + 240;
-      ripples.push({ x: px, y: py, r: 10, alpha: 0.9 }); // สร้างวงคลื่นที่ปลายนิ้ว
+      ripples.push({ x: px, y: py, r: 10, alpha: 0.9 });
     }
 
 
@@ -174,7 +174,7 @@
           const id = `${hIdx}_${tipIdx}`;
           activeIds.add(id);
 
-          const rawX = 1 - landmarks[tipIdx].x; // กลับด้านแกน X ให้เหมือนกระจก
+          const rawX = 1 - landmarks[tipIdx].x;
           const rawY = landmarks[tipIdx].y;
           const prev = fingers[id] || { x: rawX, y: rawY, pressed: false, lastTap: 0 };
 
