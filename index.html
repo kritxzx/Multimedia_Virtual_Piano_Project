@@ -40,7 +40,6 @@
 </head>
 <body>
 
-  <!-- แถบควบคุม: เปิดกล้อง / โหมดเส้นตัด-แตะ / เสียงยาว-สั้น -->
   <div class="toolbar">
     <button id="startBtn" class="btn-start">เปิดกล้อง & เริ่มเล่น</button>
 
@@ -64,8 +63,7 @@
     import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
     /* ####################################################################
-       1. ตั้งค่าระบบและข้อมูลคีย์เปียโน (CONFIG & DATA)
-       กำหนดคีย์เปียโน C4-C5, โครงกระดูกมือ, ปลายนิ้วทั้ง 5 และค่าความไว
+    CONFIG & DATA
     #################################################################### */
     const FINGER_TIPS = [4, 8, 12, 16, 20]; // โป้ง, ชี้, กลาง, นาง, ก้อย
     const HAND_BONES = [
@@ -79,13 +77,13 @@
     ];
 
     const CFG = {
-      keyTop: 0.44,       // ขอบบนของคีย์เปียโน
-      keyHeight: 0.48,    // ความสูงของคีย์ขาว
-      triggerY: 0.68,     // ระดับเส้นตัด (โหมดเส้นตัด)
-      deadzone: 0.04,     // ระยะยกนิ้วกลับกันเสียงรัว
-      tapSpeed: 0.026,    // ความเร็วการกระดิกนิ้วลง (โหมดแตะ)
-      tapCooldown: 140,   // หน่วงเวลากันเบิ้ลในโหมดแตะ (ms)
-      smooth: 0.45        // ความลื่นของพิกัดนิ้ว (EMA)
+      keyTop: 0.44,
+      keyHeight: 0.48,
+      triggerY: 0.68,
+      deadzone: 0.04,
+      tapSpeed: 0.026,
+      tapCooldown: 140,
+      smooth: 0.45
     };
 
     const state = { mode: "line", sound: "long", samplerReady: false };
@@ -97,14 +95,12 @@
 
     let handLandmarker = null;
     let latestHands = [];
-    const fingers = {};   // สถานะของแต่ละนิ้ว (พิกัด, กดอยู่ไหม, โน้ตที่ชี้)
-    const keyGlow = {};   // เวลาเรืองแสงของแต่ละคีย์
-    const ripples = [];   // เอฟเฟกต์วงคลื่นตอนกดโน้ต
-
+    const fingers = {};
+    const keyGlow = {};
+    const ripples = [];
 
     /* ####################################################################
-       2. ระบบเสียงแกรนด์เปียโน + เสียงสำรอง (AUDIO ENGINE)
-       ใช้เสียง Salamander Grand Piano + Reverb พร้อม Synth สำรองระหว่างโหลด
+       AUDIO ENGINE
     #################################################################### */
     const reverb = new Tone.Reverb({ decay: 1.8, wet: 0.22 }).toDestination();
     const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
@@ -137,10 +133,8 @@
       ripples.push({ x: px, y: py, r: 10, alpha: 0.9 });
     }
 
-
     /* ####################################################################
-       3. คำนวณพื้นที่คีย์เปียโน (KEY GEOMETRY)
-       สร้างกรอบคีย์ขาว-ดำ และตรวจสอบว่าพิกัดปลายนิ้วอยู่บนโน้ตไหน
+       KEY GEOMETRY
     #################################################################### */
     function getKeys() {
       const W = canvas.width, H = canvas.height;
@@ -160,10 +154,8 @@
       return null;
     }
 
-
     /* ####################################################################
-       4. ตรวจจับมือ 5 นิ้ว & ตรรกะการกด (HAND TRACKING & TRIGGER)
-       กรองอาการมือสั่น (EMA) และแยกการกดระหว่างโหมด "เส้นตัด" กับ "แตะ"
+       HAND TRACKING & TRIGGER
     #################################################################### */
     function updateFingers(hands, keys) {
       const now = performance.now();
@@ -212,15 +204,12 @@
       }
     }
 
-
     /* ####################################################################
-       5. วาดภาพ เอฟเฟกต์ และโครงกระดูกมือ (CANVAS RENDERING & FX)
-       วาดภาพกล้อง, คีย์เปียโนมีมิติ, เส้นตัด, โครงกระดูกมือ และวงคลื่น
+       CANVAS RENDERING & FX
     #################################################################### */
     function draw(keys) {
       const W = canvas.width, H = canvas.height, now = performance.now();
 
-      // 5.1 วาดภาพกล้องกลับด้าน + ฟิล์มมืดบางๆ ให้คีย์เด่นขึ้น
       ctx.save();
       ctx.scale(-1, 1);
       ctx.drawImage(video, -W, 0, W, H);
@@ -228,7 +217,6 @@
       ctx.fillStyle = "rgba(8, 12, 24, 0.28)";
       ctx.fillRect(0, 0, W, H);
 
-      // 5.2 วาดคีย์ขาวและคีย์ดำ (ยุบตัวและเรืองแสงเมื่อถูกกด)
       const drawKey = (k) => {
         const isLit = (keyGlow[k.note] || 0) > now;
         const isHover = Object.values(fingers).some(f => f.note === k.note);
@@ -260,7 +248,6 @@
       keys.whites.forEach(drawKey);
       keys.blacks.forEach(drawKey);
 
-      // 5.3 วาดเส้นตัดเรืองแสง (เฉพาะโหมด Line)
       if (state.mode === "line") {
         const ly = H * CFG.triggerY;
         ctx.save();
@@ -272,7 +259,6 @@
         ctx.restore();
       }
 
-      // 5.4 วาดโครงกระดูกมือ (บางๆ โปร่งแสง)
       ctx.save();
       ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
       ctx.lineWidth = 2;
@@ -286,7 +272,6 @@
       });
       ctx.restore();
 
-      // 5.5 วาดจุดปลายนิ้วทั้ง 5
       for (const f of Object.values(fingers)) {
         ctx.save();
         ctx.beginPath();
@@ -299,7 +284,6 @@
         ctx.restore();
       }
 
-      // 5.6 วาดเอฟเฟกต์วงคลื่น (Ripple) ตอนกดติด
       for (let i = ripples.length - 1; i >= 0; i--) {
         const rp = ripples[i];
         rp.r += 3.5; rp.alpha -= 0.045;
@@ -312,10 +296,8 @@
       }
     }
 
-
     /* ####################################################################
-       6. เริ่มกล้อง โหลด AI และควบคุมปุ่ม (INIT & MAIN LOOP)
-       ผูกปุ่มสลับโหมด เปิดเว็บแคม โหลด MediaPipe และรันลูปทุกเฟรม
+       INIT & MAIN LOOP
     #################################################################### */
     function bindToggle(groupId, key) {
       const group = document.getElementById(groupId);
